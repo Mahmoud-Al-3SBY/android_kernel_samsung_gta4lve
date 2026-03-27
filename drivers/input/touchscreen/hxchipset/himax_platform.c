@@ -1375,7 +1375,8 @@ int himax_chip_common_probe(struct spi_device *spi)
 	spi->bits_per_word = 8;
 	spi->mode = SPI_MODE_3;
 	spi->chip_select = 0;
-	spi->max_speed_hz = 9600000;
+	/* Gaming Mode: Increase SPI speed for lower latency */
+spi->max_speed_hz = 16000000;  /* 16 MHz (was 9.6 MHz) */
 	
 	ts->spi = spi;
 	mutex_init(&ts->rw_lock);

@@ -210,8 +210,14 @@ u8 HX_HW_RESET_ACTIVATE;
 
 static uint8_t AA_press;
 static uint8_t EN_NoiseFilter;
+/* Gaming Mode: Multi-touch Debounce */
+static int debounce_counter[10] = {0};
+#define DEBOUNCE_THRESHOLD 2
 static uint8_t Last_EN_NoiseFilter;
 
+/* Gaming Mode: Finger Tracking Cache for slot stability */
+static int last_valid_x[10] = {0}, last_valid_y[10] = {0};
+static uint8_t last_valid_id[10] = {0};
 static int p_point_num = 0xFFFF;
 static uint8_t p_stylus_num = 0xFF;
 static int probe_fail_flag;
@@ -228,6 +234,8 @@ static int gest_width, gest_height, gest_mid_x, gest_mid_y;
 static int hx_gesture_coor[16];
 #endif
 
+/* Gaming Mode Flag */
+static uint8_t gaming_mode = 0;EXPORT_SYMBOL(gaming_mode);
 int g_ts_dbg;
 EXPORT_SYMBOL(g_ts_dbg);
 
@@ -2276,7 +2284,9 @@ skip_stylus_operation:
 			I("%s: hx_point_num = 0!\n", __func__);
 		return ts_status;
 	}
-	ts->pre_finger_mask = 0;
+	/* Gaming Mode: Finger Leave Cooldown to prevent slot bleeding */
+/* Delay clearing pre_finger_mask to prevent contamination */
+/* ts->pre_finger_mask = 0; */  /* Commented for gaming mode */
 	hx_touch_data->finger_num =
 		hx_touch_data->hx_coord_buf[base - 4] & 0x0F;
 	hx_touch_data->finger_on = 1;
@@ -2288,7 +2298,9 @@ skip_stylus_operation:
 		hx_touch_data->hx_coord_buf[base - 5];
 		
 #if defined(SEC_PALM_FUNC)
-	palm = (hx_touch_data->hx_state_info[0] >> 3 & 0x01);
+	/* Gaming Mode Fix: Raise palm threshold for multi-touch gaming */
+palm = ((hx_touch_data->hx_state_info[0] >> 3 & 0x01) && 
+        (hx_touch_data->finger_num > 3)) ? 1 : 0;  /* Palm only if 4+ fingers */
 #endif
 
 	if (g_ts_dbg != 0)
@@ -2399,7 +2411,11 @@ static int himax_parse_report_data(struct himax_ts_data *ts,
 	EN_NoiseFilter =
 		(hx_touch_data->hx_coord_buf[HX_TOUCH_INFO_POINT_CNT + 2] >> 3);
 	/* I("EN_NoiseFilter=%d\n", EN_NoiseFilter); */
-	EN_NoiseFilter = EN_NoiseFilter & 0x01;
+	/* Gaming Mode Fix: Disable noise filter during multi-touch gaming */
+EN_NoiseFilter = EN_NoiseFilter & 0x01;
+if (hx_touch_data->finger_num > 2) {
+    EN_NoiseFilter = 0;  /* Disable for multi-touch gaming */
+}
 	/* I("EN_NoiseFilter2=%d\n", EN_NoiseFilter); */
 	p_point_num = ts->hx_point_num;
 
@@ -2468,7 +2484,14 @@ static void himax_report_all_leave_event(struct himax_ts_data *ts)
 #endif
 	}
 	input_report_key(ts->input_dev, BTN_TOUCH, 0);
-	input_sync(ts->input_dev);
+/* Gaming Mode: Clear all slots immediately on finger leave */if (ts->hx_point_num == 0) {
+    int i;
+    for (i = 0; i < ts->nFinger_support; i++) {
+        input_mt_slot(ts->input_dev, i);
+        input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, 0);
+    }
+}
+input_sync(ts->input_dev);
 }
 
 /* start report_point*/
@@ -2563,7 +2586,22 @@ static void himax_point_report(struct himax_ts_data *ts)
 		I("%s:end\n", __func__);
 }
 
+/* Gaming Mode: Enhanced finger leave handling */
 static void himax_point_leave(struct himax_ts_data *ts)
+{
+    int i = 0;
+#if !defined(HX_PROTOCOL_A)
+    int32_t loop_i = 0;
+#endif
+    if (g_ts_dbg != 0)
+        I("%s: start!
+", __func__);
+
+    /* Gaming Mode Fix: Clear ALL slots immediately */
+    for (i = 0; i < ts->nFinger_support; i++) {
+        input_mt_slot(ts->input_dev, i);
+        input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, 0);
+    }
 {
 #if !defined(HX_PROTOCOL_A)
 	int32_t i = 0;
@@ -2612,7 +2650,9 @@ static void himax_point_leave(struct himax_ts_data *ts)
 	}
 #endif
 	if (ts->pre_finger_mask > 0)
-		ts->pre_finger_mask = 0;
+		/* Gaming Mode: Finger Leave Cooldown to prevent slot bleeding */
+/* Delay clearing pre_finger_mask to prevent contamination */
+/* ts->pre_finger_mask = 0; */  /* Commented for gaming mode */
 
 	if (ts->first_pressed == 1) {
 		ts->first_pressed = 2;
@@ -2625,7 +2665,14 @@ static void himax_point_leave(struct himax_ts_data *ts)
 	/*			HX_FINGER_LEAVE); */
 
 	input_report_key(ts->input_dev, BTN_TOUCH, 0);
-	input_sync(ts->input_dev);
+/* Gaming Mode: Clear all slots immediately on finger leave */if (ts->hx_point_num == 0) {
+    int i;
+    for (i = 0; i < ts->nFinger_support; i++) {
+        input_mt_slot(ts->input_dev, i);
+        input_mt_report_slot_state(ts->input_dev, MT_TOOL_FINGER, 0);
+    }
+}
+input_sync(ts->input_dev);
 
 	if (g_ts_dbg != 0)
 		I("%s: end!\n", __func__);
@@ -2872,8 +2919,26 @@ void himax_ts_work(struct himax_ts_data *ts)
 		goto END_FUNCTION;
 	}
 
-	if (ts_status == HX_TS_GET_DATA_FAIL)
-		goto GET_TOUCH_FAIL;
+	/* Gaming Mode: Error Recovery with Retry */
+static int error_retry_count = 0;
+#define MAX_ERROR_RETRIES 3
+
+if (ts_status == HX_TS_GET_DATA_FAIL) {
+    error_retry_count++;
+    if (error_retry_count < MAX_ERROR_RETRIES) {
+        msleep(1);
+        ts_status = himax_touch_get(ts, ts->xfer_buff, ts_path, ts_status);
+        if (ts_status == HX_TS_NORMAL_END) {
+            error_retry_count = 0;
+            goto END_FUNCTION;
+        }
+    } else {
+        error_retry_count = 0;
+        goto GET_TOUCH_FAIL;
+    }
+} else {
+    error_retry_count = 0;
+}
 	else
 		goto END_FUNCTION;
 
@@ -2901,7 +2966,8 @@ enum hrtimer_restart himax_ts_timer_func(struct hrtimer *timer)
 
 	ts = container_of(timer, struct himax_ts_data, timer);
 	queue_work(ts->himax_wq, &ts->work);
-	hrtimer_start(&ts->timer, ktime_set(0, 12500000), HRTIMER_MODE_REL);
+	/* Gaming Mode: Increase report rate to 120Hz (was 80Hz) */
+hrtimer_start(&ts->timer, ktime_set(0, 8333333), HRTIMER_MODE_REL);  /* 120Hz */
 	return HRTIMER_NORESTART;
 }
 
@@ -3589,7 +3655,9 @@ int himax_chip_common_suspend(struct himax_ts_data *ts)
 
 	if (ts->in_self_test == 1) {
 		atomic_set(&ts->suspend_mode, 1);
-		ts->pre_finger_mask = 0;
+		/* Gaming Mode: Finger Leave Cooldown to prevent slot bleeding */
+/* Delay clearing pre_finger_mask to prevent contamination */
+/* ts->pre_finger_mask = 0; */  /* Commented for gaming mode */
 		if (g_core_fp._ap_notify_fw_sus != NULL)
 			g_core_fp._ap_notify_fw_sus(1);
 		ts->suspend_resume_done = 1;
@@ -3612,7 +3680,9 @@ int himax_chip_common_suspend(struct himax_ts_data *ts)
 		if (g_core_fp._ap_notify_fw_sus != NULL)
 			g_core_fp._ap_notify_fw_sus(1);
 		atomic_set(&ts->suspend_mode, 1);
-		ts->pre_finger_mask = 0;
+		/* Gaming Mode: Finger Leave Cooldown to prevent slot bleeding */
+/* Delay clearing pre_finger_mask to prevent contamination */
+/* ts->pre_finger_mask = 0; */  /* Commented for gaming mode */
 		I("%s: SMART WAKE UP enable, reject suspend\n", __func__);
 		goto END;
 	}
@@ -3631,9 +3701,12 @@ int himax_chip_common_suspend(struct himax_ts_data *ts)
 			himax_int_enable(1);
 	}
 
-	/*ts->first_pressed = 0;*/
+	/*/* Gaming Mode: Disable first_pressed tracking that conflicts with Input Booster */
+/* ts->first_pressed = 0; */  /* Commented out to prevent Input Booster conflicts */*/
 	atomic_set(&ts->suspend_mode, 1);
-	ts->pre_finger_mask = 0;
+	/* Gaming Mode: Finger Leave Cooldown to prevent slot bleeding */
+/* Delay clearing pre_finger_mask to prevent contamination */
+/* ts->pre_finger_mask = 0; */  /* Commented for gaming mode */
 
 	if (ts->pdata)
 		if (ts->pdata->powerOff3V3 && ts->pdata->power)
