@@ -300,6 +300,11 @@ enum HX_TS_STATUS {
 	HX_IC_RUNNING,
 	HX_ZERO_EVENT_COUNT,
 	HX_RST_OK,
+	/*
+	 * GHOST TOUCH FIX: IC firmware flagged this frame as noisy via
+	 * ig_count. The driver suppresses reporting for this interrupt.
+	 */
+	HX_IGNORE_EVENT,
 };
 
 enum cell_type {

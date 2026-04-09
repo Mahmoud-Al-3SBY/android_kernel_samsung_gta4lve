@@ -1007,7 +1007,7 @@ int himax_input_register(struct himax_ts_data *ts)
 	set_bit(INPUT_PROP_DIRECT, ts->input_dev->propbit);
 #if defined(HX_PROTOCOL_A)
 	/*ts->input_dev->mtsize = ts->nFinger_support;*/
-	input_set_abs_params(ts->input_dev, ABS_MT_TRACKING_ID, 1, 10, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_TRACKING_ID, 0, 10, 0, 0); /* ghost-touch fix: min must be 0 per MT Protocol B */
 #else
 	set_bit(MT_TOOL_FINGER, ts->input_dev->keybit);
 #if defined(HX_PROTOCOL_B_3PA)
@@ -2362,7 +2362,21 @@ skip_stylus_operation:
 	g_target_report_data->finger_on = hx_touch_data->finger_on;
 	g_target_report_data->ig_count =
 		hx_touch_data->hx_coord_buf[base - 5];
-		
+
+	/*
+	 * GHOST TOUCH FIX 1: ig_count is set by the IC firmware when it
+	 * detects electrical noise or mutual-capacitance interference.
+	 * A non-zero value means "this frame is unreliable, skip it."
+	 * Without this check, every noisy frame was forwarded to userspace
+	 * as real touch data, causing spurious ghost touch events.
+	 */
+	if (g_target_report_data->ig_count > 0) {
+		I("%s: ig_count=%d — noisy frame suppressed (ghost touch fix)\n",
+		  __func__, g_target_report_data->ig_count);
+		ts->hx_point_num = 0;
+		return HX_IGNORE_EVENT;
+	}
+
 #if defined(SEC_PALM_FUNC)
 	palm = (hx_touch_data->hx_state_info[0] >> 3 & 0x01);
 #endif
@@ -2552,8 +2566,16 @@ static void himax_report_all_leave_event(struct himax_ts_data *ts)
 static void himax_point_report(struct himax_ts_data *ts)
 {
 	int i = 0;
-	bool valid = false;
-
+	bool valid     = false;
+	/*
+	 * GHOST TOUCH FIX 2: Track whether at least one finger slot has
+	 * valid (in-range) coordinates. BTN_TOUCH must only be set to 1
+	 * when there is genuinely at least one real contact. Previously
+	 * BTN_TOUCH=1 was sent unconditionally outside the loop, even
+	 * when every slot had out-of-range coordinates, causing the kernel
+	 * to see an active touch with no valid position → ghost events.
+	 */
+	bool any_valid = false;
 
 	if (g_ts_dbg != 0) {
 		I("%s:start hx_touch_data->finger_num=%d\n",
@@ -2563,10 +2585,12 @@ static void himax_point_report(struct himax_ts_data *ts)
 		if (g_target_report_data->p[i].x >= 0
 		&& g_target_report_data->p[i].x <= ts->pdata->abs_x_max
 		&& g_target_report_data->p[i].y >= 0
-		&& g_target_report_data->p[i].y <= ts->pdata->abs_y_max)
+		&& g_target_report_data->p[i].y <= ts->pdata->abs_y_max) {
 			valid = true;
-		else
+			any_valid = true;
+		} else {
 			valid = false;
+		}
 		if (g_ts_dbg != 0)
 			I("valid=%d\n", valid);
 		if (valid) {
@@ -2632,7 +2656,8 @@ static void himax_point_report(struct himax_ts_data *ts)
 		}
 	}
 #if !defined(HX_PROTOCOL_A)
-	input_report_key(ts->input_dev, BTN_TOUCH, 1);
+	/* GHOST TOUCH FIX 2: only assert BTN_TOUCH when a real finger exists */
+	input_report_key(ts->input_dev, BTN_TOUCH, any_valid ? 1 : 0);
 #endif
 	input_sync(ts->input_dev);
 
@@ -2893,6 +2918,9 @@ static int himax_ts_operation(struct himax_ts_data *ts,
 	else
 		goto END_FUNCTION;
 
+	/* GHOST TOUCH FIX: noisy frame flagged by IC — skip input reporting */
+	if (ts_status == HX_IGNORE_EVENT)
+		goto END_FUNCTION;
 
 	ts_status = himax_report_data(ts, ts_path, ts_status);
 
