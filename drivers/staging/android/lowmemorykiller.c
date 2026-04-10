@@ -271,7 +271,8 @@ static int lmk_vmpressure_notifier(struct notifier_block *nb,
 		other_file = global_node_page_state(NR_FILE_PAGES) -
 			global_node_page_state(NR_SHMEM) -
 			total_swapcache_pages();
-		other_free = global_node_page_state(NR_FREE_PAGES);
+		// other_free = global_node_page_state(NR_FREE_PAGES);
+		other_free = global_zone_page_state(NR_FREE_PAGES);
 
 		atomic_set(&shift_adj, 1);
 		atomic_set(&vmpressure_mark, pressure);
@@ -286,7 +287,8 @@ static int lmk_vmpressure_notifier(struct notifier_block *nb,
 			global_node_page_state(NR_SHMEM) -
 			total_swapcache_pages();
 
-		other_free = global_node_page_state(NR_FREE_PAGES);
+		// other_free = global_node_page_state(NR_FREE_PAGES);
+		other_free = global_zone_page_state(NR_FREE_PAGES);
 
 		if ((other_free < lowmem_minfree[array_size - 1]) &&
 			(other_file < vmpressure_file_min)) {
@@ -357,10 +359,10 @@ void tune_lmk_zone_param(struct zonelist *zonelist, int classzone_idx,
 			if (other_free != NULL)
 				*other_free -= zone_page_state(zone,
 							       NR_FREE_PAGES);
-			if (other_file != NULL)
-				*other_file -= zone_page_state(zone,
-							       NR_FILE_PAGES)
-					      - zone_page_state(zone, NR_SHMEM);
+	        if (other_file != NULL)
+        	        *other_file -= node_page_state(zone->zone_pgdat,
+                		                               NR_FILE_PAGES)
+                        	      - node_page_state(zone->zone_pgdat, NR_SHMEM);
 		} else if (zone_idx < classzone_idx) {
 			if (zone_watermark_ok(zone, 0, 0, classzone_idx, 0))
 				*other_free -=
@@ -470,7 +472,8 @@ static int get_current_ram(int *other_free_p, int *other_file_orig_p,
 	int other_free, other_file_orig, other_file;
 	int unevictable_anon;
 
-	other_free = global_node_page_state(NR_FREE_PAGES);
+	// other_free = global_node_page_state(NR_FREE_PAGES);
+	other_free = global_zone_page_state(NR_FREE_PAGES);
 	other_file_orig = global_node_page_state(NR_FILE_PAGES) -
 			  global_node_page_state(NR_SHMEM) -
 			  total_swapcache_pages();
