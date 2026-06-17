@@ -17,7 +17,7 @@ jobs:
         sudo apt-get install -y bc bison build-essential flex git libssl-dev \
         libelf-dev xz-utils wget curl ccache libncurses-dev rsync \
         kmod lz4 pkg-config python3 python-is-python3 device-tree-compiler \
-        zstd unzip cpio libyaml-dev clang-15 lld llvm-15
+        zstd unzip cpio libyaml-dev
 
     - name: Download Toolchain
       run: |
@@ -27,9 +27,9 @@ jobs:
 
     - name: Fix Config and Warnings
       run: |
-        # تطبيق الحل رقم 1: إيقاف الـ Debug Info نهائياً
-        sed -i 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g' arch/arm64/configs/gta4lve_eur_open_defconfig
-        echo "# CONFIG_DEBUG_INFO is not set" >> arch/arm64/configs/gta4lve_eur_open_defconfig
+        # إيقاف معلومات التصحيح
+        sed -i 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g' arch/arm64/configs/gta4lvexx_defconfig || true
+        echo "# CONFIG_DEBUG_INFO is not set" >> arch/arm64/configs/gta4lvexx_defconfig
         
         # تعطيل Werror لمنع توقف البناء عند التحذيرات
         find . -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} + || true
@@ -39,62 +39,39 @@ jobs:
         mkdir -p out
         export CROSS_COMPILE=$GITHUB_WORKSPACE/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
         
-        # تعطيل قوي لمعلومات التصحيح والـ DWARF
-        export KCFLAGS="-g0 -Wno-error -Wno-unused-but-set-variable -fno-dwarf2-cfi-asm"
+        # تعطيل معلومات التصحيح والـ DWARF
+        export KCFLAGS="-g0 -Wno-error -Wno-unused-but-set-variable"
         export KBUILD_CFLAGS_KERNEL="-g0"
         export CFLAGS="-g0"
-        export CXXFLAGS="-g0"
-        export ASFLAGS="-g0"
-        export CLANG_TRIPLE=aarch64-linux-gnu-
         
-        # إنشاء ملف التكوين
+        echo "📝 إنشاء ملف التكوين..."
         make -C $GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/out ARCH=arm64 \
           CROSS_COMPILE=$CROSS_COMPILE \
-          CLANG_TRIPLE=$CLANG_TRIPLE \
-          CC=clang-15 LD=ld.lld \
-          AR=llvm-ar-15 \
-          NM=llvm-nm-15 \
-          OBJCOPY=llvm-objcopy-15 \
-          OBJDUMP=llvm-objdump-15 \
-          STRIP=llvm-strip-15 \
-          DEBUG_CFLAGS="" \
-          KCFLAGS="$KCFLAGS" \
-          KBUILD_CFLAGS_KERNEL="$KBUILD_CFLAGS_KERNEL" \
-          gta4lve_eur_open_defconfig
+          gta4lvexx_defconfig
         
-        # تحديث التكوين
+        echo "⚙️  تحديث التكوين..."
         make -C $GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/out ARCH=arm64 \
           CROSS_COMPILE=$CROSS_COMPILE \
-          CLANG_TRIPLE=$CLANG_TRIPLE \
-          CC=clang-15 LD=ld.lld \
-          AR=llvm-ar-15 \
-          NM=llvm-nm-15 \
-          OBJCOPY=llvm-objcopy-15 \
-          OBJDUMP=llvm-objdump-15 \
-          STRIP=llvm-strip-15 \
-          DEBUG_CFLAGS="" \
-          KCFLAGS="$KCFLAGS" \
-          KBUILD_CFLAGS_KERNEL="$KBUILD_CFLAGS_KERNEL" \
           olddefconfig
           
-        echo "🚀 بدء البناء الفعلي..."
-        # بناء الـ kernel
+        echo "🚀 بدء البناء..."
         make -C $GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/out ARCH=arm64 \
           CROSS_COMPILE=$CROSS_COMPILE \
-          CLANG_TRIPLE=$CLANG_TRIPLE \
-          CC=clang-15 LD=ld.lld \
-          AR=llvm-ar-15 \
-          NM=llvm-nm-15 \
-          OBJCOPY=llvm-objcopy-15 \
-          OBJDUMP=llvm-objdump-15 \
-          STRIP=llvm-strip-15 \
-          DEBUG_CFLAGS="" \
           KCFLAGS="$KCFLAGS" \
-          KBUILD_CFLAGS_KERNEL="$KBUILD_CFLAGS_KERNEL" \
-          -j$(nproc)
+          -j$(nproc) 2>&1 | tee build.log
 
     - name: Upload Output Kernel
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: gta4lve-Torkey-Next-Kernel
         path: out/arch/arm64/boot/Image
+        if-no-files-found: ignore
+
+    - name: Upload Build Log
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-log
+        path: build.log
+        if-no-files-found: ignore
