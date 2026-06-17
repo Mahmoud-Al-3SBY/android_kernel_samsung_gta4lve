@@ -27,11 +27,8 @@ jobs:
 
     - name: Fix Config and Warnings
       run: |
-        # تطبيق الحل رقم 1: إيقاف الـ Debug Info نهائياً
         sed -i 's/CONFIG_DEBUG_INFO=y/# CONFIG_DEBUG_INFO is not set/g' arch/arm64/configs/gta4lve_eur_open_defconfig
         echo "# CONFIG_DEBUG_INFO is not set" >> arch/arm64/configs/gta4lve_eur_open_defconfig
-        
-        # تعطيل Werror لمنع توقف البناء عند التحذيرات
         find . -type f -name "Makefile" -exec sed -i 's/-Werror//g' {} + || true
 
     - name: Build Kernel
@@ -39,38 +36,31 @@ jobs:
         mkdir -p out
         export CROSS_COMPILE=$GITHUB_WORKSPACE/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/bin/aarch64-linux-android-
         
-        # تعطيل قوي لمعلومات التصحيح والـ DWARF
+        # إضافة CLANG_TRIPLE للتعريف ببيئة البناء
+        export CLANG_TRIPLE=aarch64-linux-gnu-
+        
         export KCFLAGS="-g0 -Wno-error -Wno-unused-but-set-variable -fno-dwarf2-cfi-asm"
         export KBUILD_CFLAGS_KERNEL="-g0"
-        export CFLAGS="-g0"
-        export CXXFLAGS="-g0"
-        export ASFLAGS="-g0"
         
         # إنشاء ملف التكوين
         make -C $GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/out ARCH=arm64 \
           CROSS_COMPILE=$CROSS_COMPILE \
+          CLANG_TRIPLE=$CLANG_TRIPLE \
           CC=clang-15 LD=ld.lld \
-          AR=llvm-ar-15 \
-          NM=llvm-nm-15 \
-          OBJCOPY=llvm-objcopy-15 \
-          OBJDUMP=llvm-objdump-15 \
-          STRIP=llvm-strip-15 \
-          DEBUG_CFLAGS="" \
-          KCFLAGS="$KCFLAGS" \
+          AR=llvm-ar-15 NM=llvm-nm-15 OBJCOPY=llvm-objcopy-15 \
+          OBJDUMP=llvm-objdump-15 STRIP=llvm-strip-15 \
+          DEBUG_CFLAGS="" KCFLAGS="$KCFLAGS" \
           KBUILD_CFLAGS_KERNEL="$KBUILD_CFLAGS_KERNEL" \
           gta4lve_eur_open_defconfig
         
         # تحديث التكوين
         make -C $GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/out ARCH=arm64 \
           CROSS_COMPILE=$CROSS_COMPILE \
+          CLANG_TRIPLE=$CLANG_TRIPLE \
           CC=clang-15 LD=ld.lld \
-          AR=llvm-ar-15 \
-          NM=llvm-nm-15 \
-          OBJCOPY=llvm-objcopy-15 \
-          OBJDUMP=llvm-objdump-15 \
-          STRIP=llvm-strip-15 \
-          DEBUG_CFLAGS="" \
-          KCFLAGS="$KCFLAGS" \
+          AR=llvm-ar-15 NM=llvm-nm-15 OBJCOPY=llvm-objcopy-15 \
+          OBJDUMP=llvm-objdump-15 STRIP=llvm-strip-15 \
+          DEBUG_CFLAGS="" KCFLAGS="$KCFLAGS" \
           KBUILD_CFLAGS_KERNEL="$KBUILD_CFLAGS_KERNEL" \
           olddefconfig
           
@@ -78,14 +68,11 @@ jobs:
         # بناء الـ kernel
         make -C $GITHUB_WORKSPACE O=$GITHUB_WORKSPACE/out ARCH=arm64 \
           CROSS_COMPILE=$CROSS_COMPILE \
+          CLANG_TRIPLE=$CLANG_TRIPLE \
           CC=clang-15 LD=ld.lld \
-          AR=llvm-ar-15 \
-          NM=llvm-nm-15 \
-          OBJCOPY=llvm-objcopy-15 \
-          OBJDUMP=llvm-objdump-15 \
-          STRIP=llvm-strip-15 \
-          DEBUG_CFLAGS="" \
-          KCFLAGS="$KCFLAGS" \
+          AR=llvm-ar-15 NM=llvm-nm-15 OBJCOPY=llvm-objcopy-15 \
+          OBJDUMP=llvm-objdump-15 STRIP=llvm-strip-15 \
+          DEBUG_CFLAGS="" KCFLAGS="$KCFLAGS" \
           KBUILD_CFLAGS_KERNEL="$KBUILD_CFLAGS_KERNEL" \
           -j$(nproc)
 
